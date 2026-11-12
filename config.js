@@ -1,11 +1,12 @@
-// Cole aqui a configuração do seu app web do Firebase
-// (Console Firebase > Configurações do projeto > Seus apps > Config).
+// Configuração do Firebase do projeto mapa-emocional.
 // Essas chaves podem ser públicas: quem protege os dados são as regras do Firestore.
 export const firebaseConfig = {
-  apiKey: "COLE_AQUI",
-  authDomain: "SEU-PROJETO.firebaseapp.com",
-  projectId: "SEU-PROJETO",
-  appId: "COLE_AQUI"
+  apiKey: "AIzaSyBlAUfu8gnhmoi1zVzylzBg7SSAADvF0U4",
+  authDomain: "mapa-emocional-87146.firebaseapp.com",
+  projectId: "mapa-emocional-87146",
+  storageBucket: "mapa-emocional-87146.firebasestorage.app",
+  messagingSenderId: "241267336125",
+  appId: "1:241267336125:web:4520989031846b8cc728d4"
 };
 
 // Categorias emocionais (edite livremente; use as mesmas no firestore.rules)
