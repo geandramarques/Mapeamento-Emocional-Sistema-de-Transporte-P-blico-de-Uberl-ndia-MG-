@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mapa emocional participativo</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  html,body{margin:0;height:100%;font-family:system-ui,sans-serif}
+  #map{position:absolute;inset:0}
+  #panel{position:absolute;z-index:1000;top:10px;right:10px;width:290px;max-width:calc(100% - 20px);
+    background:#fff;border-radius:10px;padding:14px;box-shadow:0 2px 12px rgba(0,0,0,.25);font-size:14px}
+  #panel h1{font-size:16px;margin:0 0 8px}
+  #panel label{display:block;margin:8px 0 3px;font-weight:600}
+  #panel select,#panel textarea{width:100%;box-sizing:border-box;padding:6px;font:inherit}
+  .row{display:flex;gap:6px;margin-top:6px}
+  button{flex:1;padding:8px;border:0;border-radius:6px;background:#2d6a4f;color:#fff;font:inherit;cursor:pointer}
+  button.sec{background:#6c757d}
+  button:disabled{opacity:.5;cursor:default}
+  #msg{margin-top:8px;color:#555;min-height:1.2em}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel">
+  <h1>Onde você se sente assim?</h1>
+  <div class="row">
+    <button id="bPoint" class="sec">Marcar ponto</button>
+    <button id="bLine" class="sec">Traçar trajeto</button>
+  </div>
+  <label for="emotion">Emoção</label>
+  <select id="emotion"></select>
+  <label for="comment">Comentário (opcional)</label>
+  <textarea id="comment" rows="3" maxlength="500"></textarea>
+  <div class="row">
+    <button id="bSave" disabled>Salvar</button>
+    <button id="bCancel" class="sec">Limpar</button>
+  </div>
+  <div id="msg">Escolha ponto ou trajeto e clique no mapa.</div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script type="module">
+import { firebaseConfig, EMOTIONS, MAP_CENTER, MAP_ZOOM } from './config.js';
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import { getAuth, signInAnonymously } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { getFirestore, collection, addDoc, query, where, getDocs, serverTimestamp }
+  from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const $ = id => document.getElementById(id);
+const msg = t => $('msg').textContent = t;
+
+// Mapa-base: OpenStreetMap via Leaflet
+const map = L.map('map').setView(MAP_CENTER, MAP_ZOOM);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '&copy; colaboradores do <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+}).addTo(map);
+
+// Preenche o seletor de emoções
+for (const [k, v] of Object.entries(EMOTIONS)) {
+  const o = document.createElement('option'); o.value = k; o.textContent = v.label; $('emotion').appendChild(o);
+}
+
+let mode = null, vertices = [], draft = L.layerGroup().addTo(map), saved = L.layerGroup().addTo(map);
+
+function setMode(m) {
+  mode = m; clearDraft();
+  $('bPoint').style.background = m === 'point' ? '#2d6a4f' : '';
+  $('bLine').style.background  = m === 'line'  ? '#2d6a4f' : '';
+  msg(m === 'point' ? 'Clique no mapa para marcar o ponto.' :
+      m === 'line'  ? 'Clique em vários pontos para traçar o trajeto.' : '');
+}
+function clearDraft() { vertices = []; draft.clearLayers(); $('bSave').disabled = true; }
+
+map.on('click', e => {
+  if (!mode) return;
+  if (mode === 'point') { vertices = [e.latlng]; } else { vertices.push(e.latlng); }
+  draft.clearLayers();
+  const color = EMOTIONS[$('emotion').value].color;
+  if (mode === 'point') L.circleMarker(vertices[0], { radius: 9, color, fillOpacity: .7 }).addTo(draft);
+  else L.polyline(vertices, { color, weight: 5 }).addTo(draft);
+  $('bSave').disabled = mode === 'line' ? vertices.length < 2 : false;
+});
+$('emotion').addEventListener('change', () => { // recolore o rascunho
+  if (!vertices.length) return;
+  const m = mode, v = [...vertices]; clearDraft(); mode = m;
+  v.forEach(ll => map.fire('click', { latlng: ll }));
+});
+$('bPoint').onclick = () => setMode('point');
+$('bLine').onclick = () => setMode('line');
+$('bCancel').onclick = () => { clearDraft(); msg('Rascunho limpo.'); };
+
+function draw(f) {
+  const color = (EMOTIONS[f.emotion] || {}).color || '#555';
+  const label = (EMOTIONS[f.emotion] || {}).label || f.emotion;
+  const layer = f.type === 'point'
+    ? L.circleMarker([f.coords.lat, f.coords.lng], { radius: 9, color, fillOpacity: .7 })
+    : L.polyline(f.coords.map(c => [c.lat, c.lng]), { color, weight: 5 });
+  layer.bindPopup(`<b>${label}</b>${f.comment ? '<br>' + f.comment.replace(/</g, '&lt;') : ''}`).addTo(saved);
+}
+
+$('bSave').onclick = async () => {
+  if (!auth.currentUser || !vertices.length) return;
+  const doc = {
+    type: mode,
+    coords: mode === 'point'
+      ? { lat: vertices[0].lat, lng: vertices[0].lng }
+      : vertices.map(v => ({ lat: v.lat, lng: v.lng })),
+    emotion: $('emotion').value,
+    comment: $('comment').value.trim(),
+    ts: serverTimestamp(),
+    authorUid: auth.currentUser.uid
+  };
+  $('bSave').disabled = true;
+  try {
+    await addDoc(collection(db, 'features'), doc);
+    draw(doc); clearDraft(); $('comment').value = '';
+    msg('Registro salvo. Obrigada pela contribuição!');
+  } catch (err) { console.error(err); msg('Erro ao salvar: ' + err.code); $('bSave').disabled = false; }
+};
+
+// Login anônimo -> carrega apenas os registros do próprio participante
+signInAnonymously(auth).then(async () => {
+  const q = query(collection(db, 'features'), where('authorUid', '==', auth.currentUser.uid));
+  (await getDocs(q)).forEach(d => draw(d.data()));
+}).catch(err => msg('Falha no login anônimo: ' + err.code));
+</script>
+</body>
+</html>

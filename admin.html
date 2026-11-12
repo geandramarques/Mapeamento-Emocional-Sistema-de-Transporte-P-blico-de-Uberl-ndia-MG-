@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Painel do pesquisador</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  html,body{margin:0;height:100%;font-family:system-ui,sans-serif}
+  #map{position:absolute;inset:0}
+  #panel{position:absolute;z-index:1000;top:10px;right:10px;width:260px;background:#fff;border-radius:10px;
+    padding:14px;box-shadow:0 2px 12px rgba(0,0,0,.25);font-size:14px}
+  input{width:100%;box-sizing:border-box;padding:6px;margin:4px 0;font:inherit}
+  button{width:100%;padding:8px;margin-top:6px;border:0;border-radius:6px;background:#1d4e89;color:#fff;font:inherit;cursor:pointer}
+  #legend div{display:flex;align-items:center;gap:6px;margin-top:3px}
+  #legend i{width:12px;height:12px;border-radius:50%;display:inline-block}
+  #tools{display:none}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel">
+  <div id="login">
+    <b>Acesso do pesquisador</b>
+    <input id="email" type="email" placeholder="e-mail" autocomplete="username">
+    <input id="pass" type="password" placeholder="senha" autocomplete="current-password">
+    <button id="bLogin">Entrar</button>
+  </div>
+  <div id="tools">
+    <div id="count"></div>
+    <div id="legend"></div>
+    <button id="bExport">Exportar GeoJSON</button>
+    <button id="bOut" style="background:#6c757d">Sair</button>
+  </div>
+  <div id="msg" style="margin-top:8px;color:#555"></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script type="module">
+import { firebaseConfig, EMOTIONS, MAP_CENTER, MAP_ZOOM } from './config.js';
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
+  from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js';
+import { getFirestore, collection, getDocs } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js';
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const $ = id => document.getElementById(id);
+
+const map = L.map('map').setView(MAP_CENTER, MAP_ZOOM);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19, attribution: '&copy; colaboradores do <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+}).addTo(map);
+const layer = L.layerGroup().addTo(map);
+let records = [];
+
+$('legend').innerHTML = Object.values(EMOTIONS)
+  .map(e => `<div><i style="background:${e.color}"></i>${e.label}</div>`).join('');
+
+$('bLogin').onclick = () =>
+  signInWithEmailAndPassword(auth, $('email').value, $('pass').value)
+    .catch(err => $('msg').textContent = 'Erro: ' + err.code);
+$('bOut').onclick = () => signOut(auth);
+
+onAuthStateChanged(auth, async user => {
+  const isResearcher = user && !user.isAnonymous;
+  $('login').style.display = isResearcher ? 'none' : '';
+  $('tools').style.display = isResearcher ? 'block' : 'none';
+  layer.clearLayers(); records = [];
+  if (!isResearcher) return;
+  try {
+    const snap = await getDocs(collection(db, 'features'));
+    snap.forEach(d => { const f = d.data(); records.push({ id: d.id, ...f }); draw(f); });
+    $('count').textContent = records.length + ' registros';
+    $('msg').textContent = '';
+  } catch (err) { $('msg').textContent = 'Sem permissão de leitura: ' + err.code; }
+});
+
+function draw(f) {
+  const e = EMOTIONS[f.emotion] || { color: '#555', label: f.emotion };
+  const l = f.type === 'point'
+    ? L.circleMarker([f.coords.lat, f.coords.lng], { radius: 8, color: e.color, fillOpacity: .7 })
+    : L.polyline(f.coords.map(c => [c.lat, c.lng]), { color: e.color, weight: 4 });
+  l.bindPopup(`<b>${e.label}</b>${f.comment ? '<br>' + f.comment.replace(/</g, '&lt;') : ''}`).addTo(layer);
+}
+
+// Exporta GeoJSON (ordem [lng, lat] conforme a especificação)
+$('bExport').onclick = () => {
+  const geo = {
+    type: 'FeatureCollection',
+    features: records.map(r => ({
+      type: 'Feature',
+      properties: {
+        id: r.id, emotion: r.emotion, comment: r.comment || '',
+        authorUid: r.authorUid, ts: r.ts && r.ts.toDate ? r.ts.toDate().toISOString() : null
+      },
+      geometry: r.type === 'point'
+        ? { type: 'Point', coordinates: [r.coords.lng, r.coords.lat] }
+        : { type: 'LineString', coordinates: r.coords.map(c => [c.lng, c.lat]) }
+    }))
+  };
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(geo, null, 2)], { type: 'application/geo+json' }));
+  a.download = 'mapa-emocional.geojson'; a.click();
+};
+</script>
+</body>
+</html>

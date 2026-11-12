@@ -1,0 +1,29 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isResearcher() {
+      // troque pelo e-mail da conta do pesquisador criada no Firebase Authentication
+      return request.auth != null
+        && request.auth.token.email == 'SEU-EMAIL@exemplo.com'
+        && request.auth.token.email_verified == true;
+    }
+
+    match /features/{id} {
+      // Leitura: o próprio autor OU o pesquisador
+      allow read: if request.auth != null
+        && (resource.data.authorUid == request.auth.uid || isResearcher());
+
+      // Escrita: só cria, e só com o próprio UID
+      allow create: if request.auth != null
+        && request.resource.data.authorUid == request.auth.uid
+        && request.resource.data.type in ['point', 'line']
+        && request.resource.data.emotion in ['medo', 'ansiedade', 'desconforto', 'seguranca', 'tranquilidade']
+        && request.resource.data.keys().hasOnly(['type', 'coords', 'emotion', 'comment', 'ts', 'authorUid'])
+        && request.resource.data.comment.size() <= 500;
+
+      // Registros imutáveis
+      allow update, delete: if false;
+    }
+  }
+}
